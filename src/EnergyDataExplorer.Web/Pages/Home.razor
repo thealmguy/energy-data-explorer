@@ -1,0 +1,108 @@
+﻿@page "/"
+@using EnergyDataExplorer.Shared.Enums
+@using EnergyDataExplorer.Shared.Models
+@using EnergyDataExplorer.Web.Components.Charts
+@using EnergyDataExplorer.Web.Services
+@using EnergyDataExplorer.Shared.State
+@inject AppSettingsState SettingsState
+@inject IEnergyApiClient ApiClient
+@inject NavigationManager Navigation
+
+<PageTitle>Dashboard — Energy Data Explorer</PageTitle>
+
+<h2>Dashboard</h2>
+
+@if (!SettingsState.IsConfigured)
+{
+    <div class="alert alert-info">
+        Welcome! Please <a href="settings">configure your settings</a> to get started.
+    </div>
+}
+else if (_loading)
+{
+    <p><em>Loading energy data…</em></p>
+}
+else if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+else
+{
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center p-3">
+                <h6>Electricity (30 days)</h6>
+                <h3>@_electricityTotal.ToString("F1") kWh</h3>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center p-3">
+                <h6>Gas (30 days)</h6>
+                <h3>@_gasTotal.ToString("F1") kWh</h3>
+            </div>
+        </div>
+    </div>
+
+    @if (_readings.Count > 0)
+    {
+        <h4>Daily Consumption (last 30 days)</h4>
+        <LineChart ElementId="dashboard-line"
+                   Labels="@_chartLabels"
+                   Datasets="@_chartDatasets" />
+    }
+}
+
+@code {
+    private bool _loading;
+    private string? _error;
+    private IReadOnlyList<EnergyReading> _readings = [];
+    private decimal _electricityTotal;
+    private decimal _gasTotal;
+    private IReadOnlyList<string> _chartLabels = [];
+    private IReadOnlyList<LineChart.ChartDataset> _chartDatasets = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SettingsState.IsConfigured) return;
+
+        _loading = true;
+        try
+        {
+            var to = DateTimeOffset.UtcNow;
+            var from = to.AddDays(-30);
+            _readings = await ApiClient.GetConsumptionAsync(from, to);
+
+            var byDay = _readings
+                .GroupBy(r => r.IntervalStart.Date)
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            _chartLabels = byDay.Select(g => g.Key.ToString("dd MMM")).ToList();
+
+            _electricityTotal = _readings.Where(r => r.FuelType == FuelType.Electricity).Sum(r => r.ConsumptionKwh);
+            _gasTotal = _readings.Where(r => r.FuelType == FuelType.Gas).Sum(r => r.ConsumptionKwh);
+
+            _chartDatasets =
+            [
+                new LineChart.ChartDataset(
+                    "Electricity (kWh)",
+                    byDay.Select(g => (object?)g.Where(r => r.FuelType == FuelType.Electricity).Sum(r => r.ConsumptionKwh)).ToList(),
+                    "#36a2eb",
+                    "rgba(54,162,235,0.2)"),
+                new LineChart.ChartDataset(
+                    "Gas (kWh)",
+                    byDay.Select(g => (object?)g.Where(r => r.FuelType == FuelType.Gas).Sum(r => r.ConsumptionKwh)).ToList(),
+                    "#ff6384",
+                    "rgba(255,99,132,0.2)")
+            ];
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load data: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

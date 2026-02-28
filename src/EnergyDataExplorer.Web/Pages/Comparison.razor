@@ -1,0 +1,211 @@
+@page "/comparison"
+@using EnergyDataExplorer.Shared.Enums
+@using EnergyDataExplorer.Shared.Models
+@using EnergyDataExplorer.Web.Components.Charts
+@using EnergyDataExplorer.Web.Services
+@using EnergyDataExplorer.Shared.State
+@inject AppSettingsState SettingsState
+@inject IEnergyApiClient ApiClient
+
+<PageTitle>Comparison — Energy Data Explorer</PageTitle>
+
+<h2>Comparison</h2>
+
+@if (!SettingsState.IsConfigured)
+{
+    <div class="alert alert-info">Please <a href="settings">configure your settings</a> first.</div>
+}
+else
+{
+    <div class="row mb-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">Comparison Type</label>
+            <select class="form-select" @bind="_periodType" @bind:after="OnPeriodTypeChanged">
+                <option value="@ComparisonPeriod.Year">Year on Year</option>
+                <option value="@ComparisonPeriod.Month">Month on Month</option>
+                <option value="@ComparisonPeriod.Week">Week on Week</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Period A</label>
+            <select class="form-select" @bind="_periodAKey" @bind:after="LoadData">
+                @foreach (var opt in _periodOptions)
+                {
+                    <option value="@opt.Key">@opt.Label</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Period B</label>
+            <select class="form-select" @bind="_periodBKey" @bind:after="LoadData">
+                @foreach (var opt in _periodOptions)
+                {
+                    <option value="@opt.Key">@opt.Label</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <p><em>Loading…</em></p>
+    }
+    else if (_error is not null)
+    {
+        <div class="alert alert-danger">@_error</div>
+    }
+    else if (_result is not null)
+    {
+        @if (_result.ElectricityA.Any(v => v.HasValue) || _result.ElectricityB.Any(v => v.HasValue))
+        {
+            <h4>Electricity (kWh)</h4>
+            <BarChart ElementId="comparison-electricity"
+                      Labels="@_result.SubPeriodLabels"
+                      Datasets="@_electricityDatasets" />
+        }
+        @if (_result.GasA.Any(v => v.HasValue) || _result.GasB.Any(v => v.HasValue))
+        {
+            <h4 class="mt-4">Gas (kWh)</h4>
+            <BarChart ElementId="comparison-gas"
+                      Labels="@_result.SubPeriodLabels"
+                      Datasets="@_gasDatasets" />
+        }
+    }
+}
+
+@code {
+    private ComparisonPeriod _periodType = ComparisonPeriod.Year;
+    private string _periodAKey = string.Empty;
+    private string _periodBKey = string.Empty;
+    private List<PeriodOption> _periodOptions = [];
+    private PeriodComparisonResult? _result;
+    private bool _loading;
+    private string? _error;
+    private IReadOnlyList<BarChart.ChartDataset> _electricityDatasets = [];
+    private IReadOnlyList<BarChart.ChartDataset> _gasDatasets = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        BuildPeriodOptions();
+        SetDefaultKeys();
+        await LoadData();
+    }
+
+    private async Task OnPeriodTypeChanged()
+    {
+        BuildPeriodOptions();
+        SetDefaultKeys();
+        await LoadData();
+    }
+
+    private void BuildPeriodOptions()
+    {
+        _periodOptions = _periodType switch
+        {
+            ComparisonPeriod.Year  => BuildYearOptions(),
+            ComparisonPeriod.Month => BuildMonthOptions(),
+            ComparisonPeriod.Week  => BuildWeekOptions(),
+            _ => []
+        };
+    }
+
+    private void SetDefaultKeys()
+    {
+        if (_periodOptions.Count == 0) return;
+        _periodAKey = _periodOptions[0].Key;
+        _periodBKey = _periodType switch
+        {
+            // Same month last year = 12 entries later in the list
+            ComparisonPeriod.Month => _periodOptions.Count > 12 ? _periodOptions[12].Key : _periodOptions[^1].Key,
+            // Same week last year = 52 entries later
+            ComparisonPeriod.Week  => _periodOptions.Count > 52 ? _periodOptions[52].Key : _periodOptions[^1].Key,
+            // Previous year = second entry
+            _                      => _periodOptions.Count > 1 ? _periodOptions[1].Key : _periodOptions[0].Key
+        };
+    }
+
+    private async Task LoadData()
+    {
+        if (!SettingsState.IsConfigured) return;
+        var optA = _periodOptions.Find(o => o.Key == _periodAKey);
+        var optB = _periodOptions.Find(o => o.Key == _periodBKey);
+        if (optA is null || optB is null) return;
+
+        _loading = true;
+        _error = null;
+        try
+        {
+            _result = await ApiClient.GetComparisonAsync(_periodType, optA.Start, optB.Start);
+            BuildDatasets();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load data: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void BuildDatasets()
+    {
+        if (_result is null) return;
+        _electricityDatasets =
+        [
+            new(_result.PeriodALabel, _result.ElectricityA.Select(v => (object?)v).ToList(), "rgba(54,162,235,0.7)",  "#36a2eb"),
+            new(_result.PeriodBLabel, _result.ElectricityB.Select(v => (object?)v).ToList(), "rgba(255,159,64,0.7)",  "#ff9f40")
+        ];
+        _gasDatasets =
+        [
+            new(_result.PeriodALabel, _result.GasA.Select(v => (object?)v).ToList(), "rgba(255,99,132,0.7)",  "#ff6384"),
+            new(_result.PeriodBLabel, _result.GasB.Select(v => (object?)v).ToList(), "rgba(153,102,255,0.7)", "#9966ff")
+        ];
+    }
+
+    private static List<PeriodOption> BuildYearOptions()
+    {
+        var currentYear = DateTimeOffset.UtcNow.Year;
+        var options = new List<PeriodOption>();
+        for (var y = currentYear - 1; y >= currentYear - 7; y--)
+        {
+            var start = new DateTimeOffset(y, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            options.Add(new(start.ToString("yyyy-MM-dd"), y.ToString(), start));
+        }
+        return options;
+    }
+
+    private static List<PeriodOption> BuildMonthOptions()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var cursor = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero).AddMonths(-1);
+        var options = new List<PeriodOption>();
+        for (var i = 0; i < 36; i++)
+        {
+            var start = cursor.AddMonths(-i);
+            options.Add(new(start.ToString("yyyy-MM-dd"), start.ToString("MMM yyyy"), start));
+        }
+        return options;
+    }
+
+    private static List<PeriodOption> BuildWeekOptions()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var lastFullMonday = GetPreviousMonday(now.Date).AddDays(-7);
+        var options = new List<PeriodOption>();
+        for (var i = 0; i < 104; i++)
+        {
+            var weekStart = new DateTimeOffset(lastFullMonday.AddDays(-i * 7), TimeSpan.Zero);
+            options.Add(new(weekStart.ToString("yyyy-MM-dd"), $"W/C {weekStart:dd MMM yyyy}", weekStart));
+        }
+        return options;
+    }
+
+    private static DateTime GetPreviousMonday(DateTime date)
+    {
+        var delta = ((int)date.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        return date.AddDays(-delta);
+    }
+
+    private sealed record PeriodOption(string Key, string Label, DateTimeOffset Start);
+}

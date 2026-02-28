@@ -1,0 +1,55 @@
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<canvas id="@ElementId"></canvas>
+
+@code {
+    [Parameter, EditorRequired] public string ElementId { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlyList<string> Labels { get; set; } = default!;
+    [Parameter, EditorRequired] public IReadOnlyList<ChartDataset> Datasets { get; set; } = default!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await RenderChart();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await JS.InvokeVoidAsync("chartInterop.updateChart", ElementId, Labels, Datasets);
+    }
+
+    private async Task RenderChart()
+    {
+        var config = new
+        {
+            type = "line",
+            data = new { labels = Labels, datasets = Datasets },
+            options = new
+            {
+                responsive = true,
+                interaction = new { mode = "index", intersect = false },
+                scales = new
+                {
+                    y = new { title = new { display = true, text = "kWh" } }
+                }
+            }
+        };
+        await JS.InvokeVoidAsync("chartInterop.createChart", ElementId, config);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await JS.InvokeVoidAsync("chartInterop.destroyChart", ElementId);
+    }
+
+    public sealed record ChartDataset(
+        string Label,
+        IReadOnlyList<object?> Data,
+        string BorderColor = "#36a2eb",
+        string BackgroundColor = "rgba(54,162,235,0.2)",
+        string YAxisId = "y");
+}

@@ -1,0 +1,16 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.1.2">
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnergyDataExplorer.Api\EnergyDataExplorer.Api.csproj" />
+    <ProjectReference Include="..\EnergyDataExplorer.Web\EnergyDataExplorer.Web.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>2e22b260-1e00-45ec-8450-e07acb068dcf</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,213 @@
+@page "/settings"
+@using EnergyDataExplorer.Shared.Models
+@using EnergyDataExplorer.Web.Services
+@using EnergyDataExplorer.Shared.State
+@inject AppSettingsState SettingsState
+@inject IEnergyApiClient ApiClient
+@inject NavigationManager Navigation
+
+<PageTitle>Settings — Energy Data Explorer</PageTitle>
+
+<h2>Settings</h2>
+
+@if (_fromConfig)
+{
+    <div class="alert alert-info mb-4">
+        Some settings are pre-configured from application settings and are read-only.
+        To change them, update your <code>appsettings.json</code> or user secrets.
+    </div>
+}
+
+<EditForm Model="@_form" OnValidSubmit="HandleValidSubmit">
+    <DataAnnotationsValidator />
+
+    <h4>Octopus Energy</h4>
+    <div class="mb-3">
+        <label class="form-label">API Key</label>
+        <InputText class="form-control" @bind-Value="_form.OctopusApiKey"
+                   placeholder="Your Octopus Energy API key"
+                   disabled="@IsReadOnly(_configApiKey)" />
+        <ValidationMessage For="@(() => _form.OctopusApiKey)" />
+    </div>
+
+    <h4>Location</h4>
+    <div class="mb-3">
+        <label class="form-label">UK Postcode</label>
+        <div class="input-group">
+            <InputText class="form-control" @bind-Value="_form.Postcode"
+                       placeholder="e.g. SW1A 1AA"
+                       disabled="@IsReadOnly(_configPostcode)" />
+            <button type="button" class="btn btn-outline-secondary"
+                    @onclick="LookupPostcode"
+                    disabled="@(_lookingUpPostcode || IsReadOnly(_configPostcode))">
+                @if (_lookingUpPostcode)
+                {
+                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                }
+                else
+                {
+                    <text>Look up</text>
+                }
+            </button>
+        </div>
+        <ValidationMessage For="@(() => _form.Postcode)" />
+        @if (_form.Latitude != 0 && _form.Longitude != 0)
+        {
+            <small class="text-success">✓ Resolved: @_form.Latitude.ToString("F4")°N, @_form.Longitude.ToString("F4")°E</small>
+        }
+        @if (_geocodeError is not null)
+        {
+            <small class="text-danger">@_geocodeError</small>
+        }
+    </div>
+
+    <h4>Electricity Meter</h4>
+    <div class="mb-3">
+        <label class="form-label">MPAN</label>
+        <InputText class="form-control" @bind-Value="_form.ElectricityMpan"
+                   placeholder="Electricity meter point reference"
+                   disabled="@IsReadOnly(_configElectricityMpan)" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Serial Number</label>
+        <InputText class="form-control" @bind-Value="_form.ElectricitySerial"
+                   placeholder="Electricity meter serial number"
+                   disabled="@IsReadOnly(_configElectricitySerial)" />
+    </div>
+
+    <h4>Gas Meter</h4>
+    <div class="mb-3">
+        <label class="form-label">MPRN</label>
+        <InputText class="form-control" @bind-Value="_form.GasMprn"
+                   placeholder="Gas meter point reference"
+                   disabled="@IsReadOnly(_configGasMprn)" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Serial Number</label>
+        <InputText class="form-control" @bind-Value="_form.GasSerial"
+                   placeholder="Gas meter serial number"
+                   disabled="@IsReadOnly(_configGasSerial)" />
+    </div>
+
+    @if (_saveError is not null)
+    {
+        <div class="alert alert-danger">@_saveError</div>
+    }
+
+    <button type="submit" class="btn btn-primary">Save Settings</button>
+</EditForm>
+
+@code {
+    private readonly SettingsForm _form = new();
+    private bool _lookingUpPostcode;
+    private string? _geocodeError;
+    private string? _saveError;
+
+    // Tracks which field values were pre-loaded from server config (used for readonly checks).
+    private bool _fromConfig;
+    private string _configApiKey = string.Empty;
+    private string _configPostcode = string.Empty;
+    private string _configElectricityMpan = string.Empty;
+    private string _configElectricitySerial = string.Empty;
+    private string _configGasMprn = string.Empty;
+    private string _configGasSerial = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        var current = SettingsState.Current;
+        _fromConfig = current.IsFromServerConfig;
+
+        if (_fromConfig)
+        {
+            _configApiKey           = current.OctopusApiKey;
+            _configPostcode         = current.Postcode;
+            _configElectricityMpan  = current.ElectricityMeter?.MeterPointReference ?? string.Empty;
+            _configElectricitySerial = current.ElectricityMeter?.SerialNumber ?? string.Empty;
+            _configGasMprn          = current.GasMeter?.MeterPointReference ?? string.Empty;
+            _configGasSerial        = current.GasMeter?.SerialNumber ?? string.Empty;
+        }
+
+        _form.OctopusApiKey      = current.OctopusApiKey;
+        _form.Postcode           = current.Postcode;
+        _form.Latitude           = current.Latitude;
+        _form.Longitude          = current.Longitude;
+        _form.ElectricityMpan    = current.ElectricityMeter?.MeterPointReference ?? string.Empty;
+        _form.ElectricitySerial  = current.ElectricityMeter?.SerialNumber ?? string.Empty;
+        _form.GasMprn            = current.GasMeter?.MeterPointReference ?? string.Empty;
+        _form.GasSerial          = current.GasMeter?.SerialNumber ?? string.Empty;
+    }
+
+    // A field is readonly if it was non-empty when loaded from server config.
+    private bool IsReadOnly(string configValue) => _fromConfig && !string.IsNullOrEmpty(configValue);
+
+    private async Task LookupPostcode()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Postcode)) return;
+
+        _lookingUpPostcode = true;
+        _geocodeError = null;
+
+        try
+        {
+            var (lat, lon) = await ApiClient.GeocodePostcodeAsync(_form.Postcode);
+            _form.Latitude = lat;
+            _form.Longitude = lon;
+        }
+        catch (Exception ex)
+        {
+            _geocodeError = $"Could not resolve postcode: {ex.Message}";
+        }
+        finally
+        {
+            _lookingUpPostcode = false;
+        }
+    }
+
+    private void HandleValidSubmit()
+    {
+        _saveError = null;
+
+        if (_form.Latitude == 0 || _form.Longitude == 0)
+        {
+            _saveError = "Please look up your postcode to resolve coordinates before saving.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_form.ElectricityMpan) && string.IsNullOrWhiteSpace(_form.GasMprn))
+        {
+            _saveError = "Please enter at least one meter (electricity or gas).";
+            return;
+        }
+
+        var settings = new AppSettings
+        {
+            OctopusApiKey    = _form.OctopusApiKey,
+            Postcode         = _form.Postcode,
+            Latitude         = _form.Latitude,
+            Longitude        = _form.Longitude,
+            ElectricityMeter = !string.IsNullOrWhiteSpace(_form.ElectricityMpan)
+                ? new MeterConfiguration(_form.ElectricityMpan, _form.ElectricitySerial)
+                : null,
+            GasMeter         = !string.IsNullOrWhiteSpace(_form.GasMprn)
+                ? new MeterConfiguration(_form.GasMprn, _form.GasSerial)
+                : null,
+            // Preserve the server-config flag so readonly fields stay locked on next visit.
+            IsFromServerConfig = _fromConfig
+        };
+
+        SettingsState.Update(settings);
+        Navigation.NavigateTo("/");
+    }
+
+    private sealed class SettingsForm
+    {
+        public string OctopusApiKey { get; set; } = string.Empty;
+        public string Postcode { get; set; } = string.Empty;
+        public double Latitude { get; set; }
+        public double Longitude { get; set; }
+        public string ElectricityMpan { get; set; } = string.Empty;
+        public string ElectricitySerial { get; set; } = string.Empty;
+        public string GasMprn { get; set; } = string.Empty;
+        public string GasSerial { get; set; } = string.Empty;
+    }
+}

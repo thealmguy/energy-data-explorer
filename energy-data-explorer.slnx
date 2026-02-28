@@ -1,2 +1,14 @@
 <Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EnergyDataExplorer.Api/EnergyDataExplorer.Api.csproj" />
+    <Project Path="src/EnergyDataExplorer.AppHost/EnergyDataExplorer.AppHost.csproj" />
+    <Project Path="src/EnergyDataExplorer.ServiceDefaults/EnergyDataExplorer.ServiceDefaults.csproj" />
+    <Project Path="src/EnergyDataExplorer.Shared/EnergyDataExplorer.Shared.csproj" />
+    <Project Path="src/EnergyDataExplorer.Web/EnergyDataExplorer.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EnergyDataExplorer.Api.Tests/EnergyDataExplorer.Api.Tests.csproj" />
+    <Project Path="tests/EnergyDataExplorer.Integration.Tests/EnergyDataExplorer.Integration.Tests.csproj" />
+    <Project Path="tests/EnergyDataExplorer.Web.Tests/EnergyDataExplorer.Web.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>2677e073-33a1-465d-9cf5-baa3aa70721c</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EnergyDataExplorer.Shared\EnergyDataExplorer.Shared.csproj" />
+    <ProjectReference Include="..\EnergyDataExplorer.ServiceDefaults\EnergyDataExplorer.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>

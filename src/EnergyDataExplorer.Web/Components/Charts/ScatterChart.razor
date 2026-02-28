@@ -1,0 +1,69 @@
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<canvas id="@ElementId"></canvas>
+
+@code {
+    [Parameter, EditorRequired] public string ElementId { get; set; } = default!;
+    [Parameter, EditorRequired] public string XAxisLabel { get; set; } = "X";
+    [Parameter, EditorRequired] public string YAxisLabel { get; set; } = "Y";
+    [Parameter, EditorRequired] public IReadOnlyList<ScatterDataset> Datasets { get; set; } = default!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await RenderChart();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var allDatasets = Datasets.Select(d => new
+        {
+            label = d.Label,
+            data = d.Points,
+            backgroundColor = d.BackgroundColor
+        }).ToList();
+        await JS.InvokeVoidAsync("chartInterop.updateChart", ElementId, Array.Empty<string>(), allDatasets);
+    }
+
+    private async Task RenderChart()
+    {
+        var datasets = Datasets.Select(d => new
+        {
+            label = d.Label,
+            data = d.Points,
+            backgroundColor = d.BackgroundColor
+        }).ToList();
+
+        var config = new
+        {
+            type = "scatter",
+            data = new { datasets },
+            options = new
+            {
+                responsive = true,
+                scales = new
+                {
+                    x = new { title = new { display = true, text = XAxisLabel } },
+                    y = new { title = new { display = true, text = YAxisLabel } }
+                }
+            }
+        };
+        await JS.InvokeVoidAsync("chartInterop.createChart", ElementId, config);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await JS.InvokeVoidAsync("chartInterop.destroyChart", ElementId);
+    }
+
+    public sealed record ScatterDataset(
+        string Label,
+        IReadOnlyList<ScatterPoint> Points,
+        string BackgroundColor = "rgba(54,162,235,0.6)");
+
+    public sealed record ScatterPoint(double X, double Y);
+}

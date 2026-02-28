@@ -1,0 +1,129 @@
+@page "/correlations"
+@using EnergyDataExplorer.Shared.Enums
+@using EnergyDataExplorer.Shared.Models
+@using EnergyDataExplorer.Web.Components.Charts
+@using EnergyDataExplorer.Web.Services
+@using EnergyDataExplorer.Shared.State
+@inject AppSettingsState SettingsState
+@inject IEnergyApiClient ApiClient
+
+<PageTitle>Correlations — Energy Data Explorer</PageTitle>
+
+<h2>Correlations</h2>
+
+@if (!SettingsState.IsConfigured)
+{
+    <div class="alert alert-info">Please <a href="settings">configure your settings</a> first.</div>
+}
+else
+{
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label class="form-label">Weather Factor</label>
+            <select class="form-select" @bind="_factor" @bind:after="BuildDatasets">
+                @foreach (var f in Enum.GetValues<WeatherFactor>())
+                {
+                    <option value="@f">@FactorLabel(f)</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <p><em>Loading…</em></p>
+    }
+    else if (_error is not null)
+    {
+        <div class="alert alert-danger">@_error</div>
+    }
+    else if (_points.Count > 0)
+    {
+        <h4>@FactorLabel(_factor) vs Electricity</h4>
+        <ScatterChart ElementId="corr-elec"
+                      XAxisLabel="@FactorLabel(_factor)"
+                      YAxisLabel="Electricity (kWh)"
+                      Datasets="@_elecDatasets" />
+
+        <h4 class="mt-4">@FactorLabel(_factor) vs Gas</h4>
+        <ScatterChart ElementId="corr-gas"
+                      XAxisLabel="@FactorLabel(_factor)"
+                      YAxisLabel="Gas (kWh)"
+                      Datasets="@_gasDatasets" />
+    }
+}
+
+@code {
+    private enum WeatherFactor { Temperature, Humidity, DaylightHours, WindSpeed }
+
+    private bool _loading;
+    private string? _error;
+    private IReadOnlyList<CorrelationPoint> _points = [];
+    private WeatherFactor _factor = WeatherFactor.Temperature;
+    private IReadOnlyList<ScatterChart.ScatterDataset> _elecDatasets = [];
+    private IReadOnlyList<ScatterChart.ScatterDataset> _gasDatasets = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SettingsState.IsConfigured) return;
+
+        _loading = true;
+        try
+        {
+            var to = DateTimeOffset.UtcNow;
+            var from = to.AddMonths(-12);
+            _points = await ApiClient.GetCorrelationAsync(from, to);
+            BuildDatasets();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load data: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void BuildDatasets()
+    {
+        _elecDatasets =
+        [
+            new ScatterChart.ScatterDataset(
+                "Electricity",
+                _points
+                    .Where(p => p.FuelType == FuelType.Electricity)
+                    .Select(p => new ScatterChart.ScatterPoint(FactorValue(p), (double)p.ConsumptionKwh))
+                    .ToList(),
+                "rgba(54,162,235,0.6)")
+        ];
+        _gasDatasets =
+        [
+            new ScatterChart.ScatterDataset(
+                "Gas",
+                _points
+                    .Where(p => p.FuelType == FuelType.Gas)
+                    .Select(p => new ScatterChart.ScatterPoint(FactorValue(p), (double)p.ConsumptionKwh))
+                    .ToList(),
+                "rgba(255,99,132,0.6)")
+        ];
+    }
+
+    private double FactorValue(CorrelationPoint p) => _factor switch
+    {
+        WeatherFactor.Temperature   => p.TemperatureCelsius,
+        WeatherFactor.Humidity      => p.RelativeHumidityPercent,
+        WeatherFactor.DaylightHours => p.SunshineDurationMinutes / 60.0,
+        WeatherFactor.WindSpeed     => p.WindSpeedKmh,
+        _ => p.TemperatureCelsius
+    };
+
+    private static string FactorLabel(WeatherFactor f) => f switch
+    {
+        WeatherFactor.Temperature   => "Temperature (°C)",
+        WeatherFactor.Humidity      => "Humidity (%)",
+        WeatherFactor.DaylightHours => "Daylight Hours",
+        WeatherFactor.WindSpeed     => "Wind Speed (km/h)",
+        _ => string.Empty
+    };
+}

@@ -1,0 +1,178 @@
+# Azure DevOps CI/CD Pipeline — Energy Data Explorer
+# Triggered on push to main. Stages: Build → Test → Publish → Deploy
+#
+# Required pipeline variables (set in Azure DevOps Library or pipeline UI):
+#   AZURE_SERVICE_CONNECTION  - Azure Resource Manager service connection name
+#   AZURE_SUBSCRIPTION_ID     - Azure subscription ID
+#   AZURE_RESOURCE_GROUP      - Resource group containing the App Service
+#   APP_SERVICE_PLAN          - Name of the existing App Service Plan (basic SKU)
+#   APP_SERVICE_NAME_API      - App Service name for the backend API
+#   APP_INSIGHTS_NAME         - Application Insights resource name
+#   APP_INSIGHTS_CONNECTION_STRING - Application Insights connection string (secret)
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  buildConfiguration: 'Release'
+  dotnetVersion: '10.0.x'
+  solutionFile: 'energy-data-explorer.slnx'
+  apiProject: 'src/EnergyDataExplorer.Api/EnergyDataExplorer.Api.csproj'
+  webProject: 'src/EnergyDataExplorer.Web/EnergyDataExplorer.Web.csproj'
+  publishOutputApi: '$(Build.ArtifactStagingDirectory)/api'
+  publishOutputWeb: '$(Build.ArtifactStagingDirectory)/web'
+
+stages:
+
+  # ─── Stage 1: Build ───────────────────────────────────────────────────────────
+  - stage: Build
+    displayName: 'Build'
+    jobs:
+      - job: Build
+        displayName: 'Restore & Build'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UseDotNet@2
+            displayName: 'Use .NET $(dotnetVersion)'
+            inputs:
+              version: $(dotnetVersion)
+              includePreviewVersions: true
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore NuGet packages'
+            inputs:
+              command: restore
+              projects: $(solutionFile)
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build solution'
+            inputs:
+              command: build
+              projects: $(solutionFile)
+              arguments: '--no-restore --configuration $(buildConfiguration)'
+
+  # ─── Stage 2: Test ────────────────────────────────────────────────────────────
+  - stage: Test
+    displayName: 'Test'
+    dependsOn: Build
+    jobs:
+      - job: Test
+        displayName: 'Run unit & integration tests'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UseDotNet@2
+            displayName: 'Use .NET $(dotnetVersion)'
+            inputs:
+              version: $(dotnetVersion)
+              includePreviewVersions: true
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore NuGet packages'
+            inputs:
+              command: restore
+              projects: $(solutionFile)
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Run tests with coverage'
+            inputs:
+              command: test
+              projects: 'tests/**/*.csproj'
+              arguments: >
+                --no-restore
+                --configuration $(buildConfiguration)
+                --collect:"XPlat Code Coverage"
+                --results-directory $(Agent.TempDirectory)/TestResults
+              publishTestResults: true
+
+          - task: PublishCodeCoverageResults@2
+            displayName: 'Publish code coverage'
+            inputs:
+              summaryFileLocation: '$(Agent.TempDirectory)/TestResults/**/coverage.cobertura.xml'
+
+  # ─── Stage 3: Publish ─────────────────────────────────────────────────────────
+  - stage: Publish
+    displayName: 'Publish'
+    dependsOn: Test
+    jobs:
+      - job: Publish
+        displayName: 'Publish artefacts'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UseDotNet@2
+            displayName: 'Use .NET $(dotnetVersion)'
+            inputs:
+              version: $(dotnetVersion)
+              includePreviewVersions: true
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore NuGet packages'
+            inputs:
+              command: restore
+              projects: $(solutionFile)
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Publish API'
+            inputs:
+              command: publish
+              publishWebProjects: false
+              projects: $(apiProject)
+              arguments: >
+                --no-restore
+                --configuration $(buildConfiguration)
+                --output $(publishOutputApi)
+              zipAfterPublish: true
+              modifyOutputPath: false
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Publish Web'
+            inputs:
+              command: publish
+              publishWebProjects: false
+              projects: $(webProject)
+              arguments: >
+                --no-restore
+                --configuration $(buildConfiguration)
+                --output $(publishOutputWeb)
+              zipAfterPublish: true
+              modifyOutputPath: false
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish pipeline artefacts'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+
+  # ─── Stage 4: Deploy ──────────────────────────────────────────────────────────
+  - stage: Deploy
+    displayName: 'Deploy to Azure'
+    dependsOn: Publish
+    condition: succeeded()
+    jobs:
+      - deployment: DeployApi
+        displayName: 'Deploy API to App Service'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: drop
+
+                - task: AzureWebApp@1
+                  displayName: 'Deploy API'
+                  inputs:
+                    azureSubscription: $(AZURE_SERVICE_CONNECTION)
+                    appType: webApp
+                    appName: $(APP_SERVICE_NAME_API)
+                    resourceGroupName: $(AZURE_RESOURCE_GROUP)
+                    package: '$(Pipeline.Workspace)/drop/api/*.zip'
+                    appSettings: |
+                      -APPLICATIONINSIGHTS_CONNECTION_STRING "$(APP_INSIGHTS_CONNECTION_STRING)"
+                      -ASPNETCORE_ENVIRONMENT "Production"
